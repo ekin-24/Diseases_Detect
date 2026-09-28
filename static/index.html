@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eye Analysis System</title>
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #f0f4f8; display: flex; justify-content: center; padding: 20px;}
+        .container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.05); width: 100%; max-width: 600px; text-align: center; }
+        
+        /* Upload image Style */
+        .upload-area { border: 2px dashed #cbd5e1; border-radius: 15px; padding: 30px; cursor: pointer; transition: 0.3s; background: #f8fafc; }
+        .upload-area:hover { border-color: #3b82f6; background: #eff6ff; }
+        #imagePreview { max-width: 100%; max-height: 300px; border-radius: 10px; display: none; margin: 20px auto; }
+        
+        /* Result Style */
+        .report-box { margin-top: 30px; text-align: left; display: none; }
+        .disease-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid; }
+        .disease-prob { font-weight: 800; padding: 5px 12px; border-radius: 6px; font-size: 14px; }
+        
+        /* Red:Dangerous, Green:Safe, Gray:Other */
+        .high-risk { background: #fef2f2; border-color: #fecaca; }
+        .high-risk .disease-prob { background: #ef4444; color: white; }
+        
+        .low-risk { background: #f0fdf4; border-color: #bbf7d0; }
+        .low-risk .disease-prob { background: #22c55e; color: white; }
+        
+        .normal-risk { background: #f8fafc; border-color: #e2e8f0; }
+        .normal-risk .disease-prob { background: #94a3b8; color: white; }
+
+        /* Loading Animation Style */
+        .loader { display: none; margin: 20px auto; border: 4px solid #f3f3f3; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .btn { background: #3b82f6; color: white; border: none; padding: 14px 30px; border-radius: 25px; cursor: pointer; margin-top: 20px; width: 100%; display: none; font-weight: bold;}
+        
+        .heatmap-box { margin-top: 20px; background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 10px; text-align: center;}
+        .heatmap-box img { max-width: 100%; border-radius: 8px; margin-top: 10px; }
+        .heatmap-title { font-size: 14px; color: #475569; font-weight: 600; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Dieases Detect From Eye Data</h1>
+
+    <!-- Upload Image -->
+    <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+        <span id="uploadText">Upload Eye Data</span>
+        <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="previewImage(event)">
+    </div>
+
+    <!-- Show selected image and button -->
+    <img id="imagePreview" src="">
+    <button id="analyzeBtn" class="btn" onclick="uploadAndPredict()">Start Analysis</button>
+    <div id="loader" class="loader"></div>
+
+    <!-- Result Box -->
+    <div id="reportBox" class="report-box">
+        <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-bottom:15px; color:#0f172a;">Analysis Result</h3>
+        
+        <!-- Dieases Percentages -->
+        <div id="resultsList"></div>
+        
+        <!-- Heat Map Area -->
+        <div id="heatmapContainer" class="heatmap-box" style="display:none;">
+            <div class="heatmap-title">Focal Point (<span id="targetDiseaseName"></span>)</div>
+            
+            <!-- Image label for map -->
+            <img id="heatmapImage" src="">
+            <p style="font-size:12px; color:#64748b; margin-top:10px;">The red areas are the places requiring the most attention</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    let selectedFile = null;
+
+    // When user select image
+    function previewImage(event) {
+        const reader = new FileReader();
+        reader.onload = function(){
+            document.getElementById('imagePreview').src = reader.result;
+            document.getElementById('imagePreview').style.display = 'block';
+            document.getElementById('uploadText').innerText = "Select different image";
+            document.getElementById('analyzeBtn').style.display = 'block';
+            document.getElementById('reportBox').style.display = 'none';
+        }
+        selectedFile = event.target.files[0];
+        reader.readAsDataURL(selectedFile);
+    }
+
+    // When user pres start analysis
+    async function uploadAndPredict() {
+        if (!selectedFile) return;
+
+        // Start loading animation
+        document.getElementById('analyzeBtn').style.display = 'none';
+        document.getElementById('loader').style.display = 'block';
+        document.getElementById('reportBox').style.display = 'none';
+
+        // Convert image to data package
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+
+        try {
+            // Send request to python
+            const response = await fetch('/predict/', { method: 'POST', body: formData });
+            const data = await response.json(); // Convert request to json
+
+            // Close loading animation
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('analyzeBtn').style.display = 'block';
+
+            if (data.status === "success") {
+                const resultsList = document.getElementById('resultsList');
+                resultsList.innerHTML = ''; // Delete old list
+                
+                // List the possibilities
+                data.predictions.forEach(item => {
+                    let riskClass = "normal-risk";
+                    if (item.probability >= 50) {
+                        // If it normal then green if it not then red
+                        riskClass = item.disease.includes("Normal") ? "low-risk" : "high-risk";
+                    }
+
+                    // Create an HTML div with the name and probability of the disease and add it to the list
+                    const div = document.createElement('div');
+                    div.className = `disease-item ${riskClass}`;
+                    div.innerHTML = `
+                        <span class="disease-name">${item.disease}</span>
+                        <span class="disease-prob">%${item.probability}</span>
+                    `;
+                    resultsList.appendChild(div);
+                });
+
+                // Show heat map
+                if (data.heatmap) {
+                    // Dieases name
+                    document.getElementById('targetDiseaseName').innerText = data.target_disease;
+                    
+                    // Convert numbers to image
+                    document.getElementById('heatmapImage').src = "data:image/jpeg;base64," + data.heatmap;
+                    
+                    // Show hidden heat map
+                    document.getElementById('heatmapContainer').style.display = 'block';
+                }
+
+                // Show result box
+                document.getElementById('reportBox').style.display = 'block';
+            } else {
+                alert("Error: " + data.message);
+            }
+        } catch (error) {
+            alert("Could not connect the server!");
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('analyzeBtn').style.display = 'block';
+        }
+    }
+</script>
+
+</body>
+</html>
